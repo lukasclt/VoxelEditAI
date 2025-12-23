@@ -13,7 +13,8 @@ interface OpenRouterResponse {
 const formatBlocksForContext = (blocks: Voxel[]): string => {
   // We limit the context to avoid hitting token limits with large structures
   // A compact string representation: "x,y,z:id"
-  const MAX_BLOCKS_CONTEXT = 2000;
+  // Reduced to 1000 to improve generation speed and reduce latency
+  const MAX_BLOCKS_CONTEXT = 1000;
   
   if (blocks.length === 0) return "The world is currently empty.";
   

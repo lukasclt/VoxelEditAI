@@ -225,7 +225,7 @@ const SceneContent = ({
         position={[20, 30, 20]} 
         intensity={1.2} 
         castShadow 
-        shadow-mapSize={[2048, 2048]}
+        shadow-mapSize={[1024, 1024]} 
       />
       
       <group 
@@ -233,15 +233,14 @@ const SceneContent = ({
         onPointerOut={handlePointerOut} 
         onClick={handleClick}
       >
-        <Suspense fallback={null}>
-          {Object.entries(groupedBlocks).map(([blockId, positions]) => (
+        {Object.entries(groupedBlocks).map(([blockId, positions]) => (
+          <Suspense key={blockId} fallback={null}>
             <BlockInstancedGroup 
-              key={blockId} 
               blockId={blockId} 
               positions={positions} 
             />
-          ))}
-        </Suspense>
+          </Suspense>
+        ))}
       </group>
 
       <GroundPlane />

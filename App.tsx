@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Send
 } from 'lucide-react';
+import { Loader } from '@react-three/drei';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import VoxelWorld from './components/VoxelWorld';
@@ -396,6 +397,9 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Global Loader for Textures */}
+      <Loader />
 
       {/* Settings Modal */}
       {isSettingsOpen && (
