@@ -1,0 +1,5 @@
+{
+  "name": "VoxelEdit AI",
+  "description": "A web-based Minecraft schematic editor powered by Gemini AI. Create, edit, and export .schem files with 3D visualization.",
+  "requestFramePermissions": []
+}
