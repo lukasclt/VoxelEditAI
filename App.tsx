@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   Box, 
   Eraser, 
@@ -9,15 +9,17 @@ import {
   X,
   Loader2,
   Settings,
-  ChevronDown
+  ChevronDown,
+  MessageSquare,
+  Send
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import VoxelWorld from './components/VoxelWorld';
 import { BLOCKS } from './constants';
-import { ToolType, VoxelMap } from './types';
+import { ToolType, VoxelMap, ChatMessage } from './types';
 import { generateSchemFile, generateClassicSchematicFile } from './services/nbtService';
-import { generateStructure } from './services/geminiService';
+import { editStructure } from './services/geminiService';
 
 export function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -40,18 +42,22 @@ export default function App() {
   const [selectedBlockId, setSelectedBlockId] = useState(BLOCKS[0].id);
   const [tool, setTool] = useState<ToolType>(ToolType.PLACE);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(true); // New Chat Sidebar State
   
   // Settings & AI State
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("xiaomi/mimo-v2-flash:free");
   
-  const [aiPrompt, setAiPrompt] = useState("");
+  // Chat State
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: 'assistant', content: 'Hello! I can help you build. Try "Build a house" or "Change the roof to red wool".' }
+  ]);
+  const [chatInput, setChatInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Load cookies on mount
   useEffect(() => {
@@ -60,6 +66,10 @@ export default function App() {
     if (savedKey) setApiKey(savedKey);
     if (savedModel) setModel(savedModel);
   }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
 
   const saveSettings = () => {
     setCookie("openrouter_key", apiKey, 30);
@@ -125,31 +135,39 @@ export default function App() {
     }
   };
 
-  const handleAiGenerate = async () => {
-    if (!aiPrompt.trim()) return;
+  const handleChatSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!chatInput.trim()) return;
     if (!apiKey) {
-      setError("API Key missing. Please set it in Settings.");
+      setChatMessages(prev => [...prev, { role: 'system', content: '⚠️ Please set your OpenRouter API Key in Settings first.' }]);
       return;
     }
-    
+
+    const userMsg = chatInput;
+    setChatInput("");
+    setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setIsGenerating(true);
-    setError(null);
+
     try {
-      const generatedVoxels = await generateStructure(aiPrompt, apiKey, model);
+      // Convert Map to Array for API
+      const currentVoxels = Array.from(blocks.values());
       
+      const result = await editStructure(currentVoxels, userMsg, apiKey, model);
+      
+      // Update World
       setBlocks(prev => {
-        const newMap = new Map(prev);
-        generatedVoxels.forEach(v => {
+        const newMap = new Map(); // Replace completely based on AI response to support deletions/edits correctly
+        result.voxels.forEach(v => {
           const key = `${v.x},${v.y},${v.z}`;
           newMap.set(key, v);
         });
         return newMap;
       });
-      
-      setIsAiModalOpen(false);
-      setAiPrompt("");
+
+      setChatMessages(prev => [...prev, { role: 'assistant', content: result.message }]);
+
     } catch (err: any) {
-      setError(err.message || "Failed to generate structure.");
+      setChatMessages(prev => [...prev, { role: 'system', content: `Error: ${err.message}` }]);
     } finally {
       setIsGenerating(false);
     }
@@ -163,7 +181,7 @@ export default function App() {
           <div className="w-8 h-8 bg-mc-accent flex items-center justify-center rounded border border-white/20">
             <Box size={20} className="text-white" />
           </div>
-          <h1 className="font-bold text-lg tracking-wide text-white">VoxelEdit AI</h1>
+          <h1 className="font-bold text-lg tracking-wide text-white hidden sm:block">VoxelEdit AI</h1>
         </div>
         
         <div className="flex items-center gap-2">
@@ -176,11 +194,15 @@ export default function App() {
           </button>
 
           <button 
-            onClick={() => setIsAiModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium transition-colors"
+            onClick={() => setIsChatOpen(!isChatOpen)}
+            className={cn(
+              "p-2 rounded transition-colors flex items-center gap-2",
+              isChatOpen ? "bg-purple-600/20 text-purple-400" : "text-gray-400 hover:text-white hover:bg-white/5"
+            )}
+            title="Toggle AI Chat"
           >
-            <Wand2 size={16} />
-            AI Generator
+            <MessageSquare size={20} />
+            <span className="text-sm font-medium hidden md:inline">AI Chat</span>
           </button>
           
           <div className="relative">
@@ -189,7 +211,7 @@ export default function App() {
               className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition-colors"
             >
               <Download size={16} />
-              Export
+              <span className="hidden sm:inline">Export</span>
               <ChevronDown size={14} className="ml-1" />
             </button>
             
@@ -215,15 +237,15 @@ export default function App() {
 
       {/* Main Layout */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Sidebar */}
+        {/* Left Sidebar (Tools) */}
         <div className={cn(
-          "bg-mc-panel border-r border-mc-border w-64 flex flex-col transition-all duration-300 absolute z-20 h-full md:relative",
-          !isSidebarOpen && "-translate-x-full md:hidden"
+          "bg-mc-panel border-r border-mc-border w-16 md:w-64 flex flex-col transition-all duration-300 z-20 shrink-0",
+          !isSidebarOpen && "-translate-x-full absolute h-full md:relative md:translate-x-0 md:w-0 md:border-r-0 md:overflow-hidden"
         )}>
           {/* Tools */}
-          <div className="p-4 border-b border-mc-border">
-            <h3 className="text-xs font-bold text-gray-400 uppercase mb-3">Tools</h3>
-            <div className="grid grid-cols-4 gap-2">
+          <div className="p-2 md:p-4 border-b border-mc-border">
+            <h3 className="hidden md:block text-xs font-bold text-gray-400 uppercase mb-3">Tools</h3>
+            <div className="flex flex-col md:grid md:grid-cols-4 gap-2">
               <ToolButton 
                 active={tool === ToolType.PLACE} 
                 onClick={() => setTool(ToolType.PLACE)}
@@ -247,9 +269,9 @@ export default function App() {
           </div>
 
           {/* Block Palette */}
-          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-            <h3 className="text-xs font-bold text-gray-400 uppercase mb-3">Blocks</h3>
-            <div className="grid grid-cols-3 gap-2">
+          <div className="flex-1 overflow-y-auto p-2 md:p-4 custom-scrollbar">
+            <h3 className="hidden md:block text-xs font-bold text-gray-400 uppercase mb-3">Blocks</h3>
+            <div className="flex flex-col md:grid md:grid-cols-3 gap-2">
               {BLOCKS.map(block => (
                 <button
                   key={block.id}
@@ -258,20 +280,25 @@ export default function App() {
                     setTool(ToolType.PLACE);
                   }}
                   className={cn(
-                    "aspect-square rounded border-2 flex items-center justify-center transition-all hover:scale-105",
+                    "aspect-square rounded border-2 flex items-center justify-center transition-all hover:scale-105 relative group",
                     selectedBlockId === block.id 
                       ? "border-white ring-2 ring-mc-accent/50" 
                       : "border-mc-border hover:border-gray-400"
                   )}
                   style={{ backgroundColor: block.color }}
                   title={block.name}
-                />
+                >
+                   {/* Tooltip for collapsed view */}
+                   <span className="md:hidden absolute left-full ml-2 px-2 py-1 bg-black/80 text-white text-xs rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-50 pointer-events-none">
+                      {block.name}
+                   </span>
+                </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Toggle Sidebar Button (Mobile) */}
+        {/* Toggle Left Sidebar Button (Mobile) */}
         {!isSidebarOpen && (
           <button 
             onClick={() => setIsSidebarOpen(true)}
@@ -282,7 +309,7 @@ export default function App() {
         )}
 
         {/* 3D Viewport */}
-        <div className="flex-1 relative bg-black" onClick={() => setIsExportOpen(false)}>
+        <div className="flex-1 relative bg-black min-w-0" onClick={() => setIsExportOpen(false)}>
           <VoxelWorld 
             blocks={blocks}
             selectedBlockId={selectedBlockId}
@@ -291,12 +318,81 @@ export default function App() {
             onRemoveBlock={handleRemoveBlock}
           />
           
-          <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur px-3 py-2 rounded text-xs text-gray-300 pointer-events-none select-none">
-            {blocks.size} Blocks Placed
+          <div className="absolute bottom-4 left-4 right-4 md:right-auto md:w-auto flex justify-between pointer-events-none">
+             <div className="bg-black/50 backdrop-blur px-3 py-2 rounded text-xs text-gray-300 select-none">
+               LMB: Action | RMB: Rotate
+             </div>
+             <div className="bg-black/50 backdrop-blur px-3 py-2 rounded text-xs text-gray-300 select-none ml-2">
+              {blocks.size} Blocks
+             </div>
+          </div>
+        </div>
+
+        {/* Right Sidebar (Chat AI) */}
+        <div className={cn(
+           "bg-mc-panel border-l border-mc-border w-80 flex flex-col transition-all duration-300 absolute right-0 h-full z-20 md:relative",
+           !isChatOpen && "translate-x-full md:w-0 md:translate-x-0 md:border-l-0"
+        )}>
+          <div className="p-4 border-b border-mc-border bg-mc-bg/50 flex items-center justify-between">
+            <h2 className="font-bold flex items-center gap-2">
+              <Wand2 size={16} className="text-purple-400" />
+              AI Builder
+            </h2>
+            <button onClick={() => setIsChatOpen(false)} className="md:hidden text-gray-400">
+              <X size={18} />
+            </button>
+          </div>
+          
+          {/* Chat History */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+            {chatMessages.map((msg, i) => (
+              <div key={i} className={cn(
+                "flex flex-col max-w-[90%]",
+                msg.role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
+              )}>
+                <div className={cn(
+                  "px-3 py-2 rounded-lg text-sm",
+                  msg.role === 'user' 
+                    ? "bg-purple-600 text-white rounded-br-none" 
+                    : msg.role === 'system'
+                    ? "bg-red-900/50 text-red-200 border border-red-800"
+                    : "bg-mc-bg border border-mc-border text-gray-200 rounded-bl-none"
+                )}>
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+            {isGenerating && (
+              <div className="flex items-center gap-2 text-gray-400 text-sm">
+                <Loader2 size={14} className="animate-spin" />
+                <span>Thinking...</span>
+              </div>
+            )}
+            <div ref={chatEndRef} />
           </div>
 
-           <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur px-3 py-2 rounded text-xs text-gray-300 pointer-events-none select-none">
-             LMB: Action | RMB: Rotate | Scroll: Zoom
+          {/* Chat Input */}
+          <div className="p-4 bg-mc-panel border-t border-mc-border">
+            <form onSubmit={handleChatSubmit} className="relative">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ex: Add a stone roof..."
+                disabled={isGenerating}
+                className="w-full bg-mc-bg border border-mc-border rounded-lg pl-3 pr-10 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all disabled:opacity-50"
+              />
+              <button 
+                type="submit"
+                disabled={!chatInput.trim() || isGenerating}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-purple-400 hover:text-white hover:bg-purple-600 rounded-md transition-all disabled:opacity-0"
+              >
+                <Send size={16} />
+              </button>
+            </form>
+            <p className="text-[10px] text-gray-500 mt-2 text-center">
+              AI can modify existing blocks. Be specific!
+            </p>
           </div>
         </div>
       </div>
@@ -348,71 +444,6 @@ export default function App() {
                   Save & Close
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* AI Modal */}
-      {isAiModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-mc-panel border border-mc-border rounded-lg shadow-2xl w-full max-w-md p-6 relative">
-            <button 
-              onClick={() => setIsAiModalOpen(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white"
-            >
-              <X size={20} />
-            </button>
-            
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded bg-purple-600 flex items-center justify-center">
-                <Wand2 size={24} className="text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">AI Builder</h2>
-                <p className="text-xs text-gray-400">Powered by OpenRouter</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  What should I build?
-                </label>
-                <textarea 
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="e.g., A small cozy cottage with a stone foundation..."
-                  className="w-full h-32 bg-mc-bg border border-mc-border rounded p-3 text-white placeholder-gray-500 focus:outline-none focus:border-mc-accent resize-none"
-                />
-              </div>
-
-              {error && (
-                <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-200 text-sm">
-                  {error}
-                </div>
-              )}
-
-              {!apiKey && (
-                 <div className="p-3 bg-yellow-900/30 border border-yellow-800 rounded text-yellow-200 text-sm">
-                  Please configure your OpenRouter API Key in settings.
-                </div>
-              )}
-
-              <button 
-                onClick={handleAiGenerate}
-                disabled={isGenerating || !aiPrompt.trim() || !apiKey}
-                className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded font-bold transition-all flex items-center justify-center gap-2"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  "Generate Structure"
-                )}
-              </button>
             </div>
           </div>
         </div>

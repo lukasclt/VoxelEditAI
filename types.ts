@@ -35,3 +35,8 @@ export interface SchematicMetadata {
   palette: Record<string, number>;
   blockData: Uint8Array;
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
